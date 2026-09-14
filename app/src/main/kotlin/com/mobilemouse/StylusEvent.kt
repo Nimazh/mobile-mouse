@@ -1,6 +1,5 @@
 package com.mobilemouse
 
-import kotlinx.serialization.Serializable
 
 /**
  * Binary packet format (16 bytes) for minimum-latency transmission:
