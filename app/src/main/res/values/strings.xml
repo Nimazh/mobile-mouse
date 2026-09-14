@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Mobile Mouse</string>
-    <string name="notification_channel_id">stylus_server</string>
-    <string name="notification_channel_name">Stylus Server</string>
-    <string name="notification_text">WebSocket server running on port 8765</string>
+    <string name="mode_pen">Mode: Pen</string>
+    <string name="mode_mouse">Mode: Mouse</string>
 </resources>

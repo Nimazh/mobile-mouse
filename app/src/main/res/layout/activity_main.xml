@@ -56,14 +56,9 @@
                 <Button
                     android:id="@+id/btnModeToggle"
                     android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:backgroundTint="#E94560"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="????: ???"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
+                    android:layout_height="wrap_content"
+                    android:text="@string/mode_pen"
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <View
@@ -99,7 +94,7 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Touch Pad (clean, no lines drawn) -->
+    <!-- Touch Pad (clean digitizer pad, no lines drawn) -->
     <com.mobilemouse.StylusView
         android:id="@+id/stylusView"
         android:layout_width="0dp"
