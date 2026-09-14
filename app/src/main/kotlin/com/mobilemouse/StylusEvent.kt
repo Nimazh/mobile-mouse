@@ -27,6 +27,7 @@ object StylusPacket {
     const val TYPE_PEN_HOVER: Byte     = 0x04
     const val TYPE_ERASER_DOWN: Byte   = 0x05
     const val TYPE_ERASER_MOVE: Byte   = 0x06
+    const val TYPE_ERASER_UP: Byte     = 0x07
     const val TYPE_MOUSE_TAP: Byte        = 0x10
     const val TYPE_MOUSE_RIGHT_TAP: Byte  = 0x11
     const val TYPE_MOUSE_SCROLL: Byte     = 0x12
