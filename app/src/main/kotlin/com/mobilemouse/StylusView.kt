@@ -1,4 +1,4 @@
-﻿package com.mobilemouse
+package com.mobilemouse
 
 import android.content.Context
 import android.graphics.*
@@ -6,13 +6,13 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
- * Full-screen touch pad that:
- *  - Accepts finger, stylus, and eraser inputs
- *  - Reads pressure, tilt (orientation), and twist if available
- *  - Draws a smooth visual trail with pressure-width mapping
- *  - Calls onStylusEvent for each meaningful event
+ * Clean digitizer pad:
+ * - NO lines are drawn or kept on screen (behaves like a real graphics tablet)
+ * - Shows an optional subtle touch indicator only while finger is down
+ * - Supports both Relative (Touchpad) and Absolute (Tablet) modes
  */
 class StylusView @JvmOverloads constructor(
     context: Context,
@@ -22,91 +22,76 @@ class StylusView @JvmOverloads constructor(
 
     var onStylusEvent: ((packet: ByteArray) -> Unit)? = null
     var onPressureChanged: ((pressure: Float) -> Unit)? = null
+    var onEventRate: ((hz: Int) -> Unit)? = null
 
-    // -- Drawing --------------------------------------------------------------
-    private val trailBitmap: Bitmap? get() = if (width > 0 && height > 0) _trailBitmap else null
-    private var _trailBitmap: Bitmap? = null
-    private var _trailCanvas: Canvas? = null
+    // Mode: true = Relative (Touchpad/Mouse), false = Absolute (Graphics Tablet)
+    var isRelativeMode: Boolean = false
 
-    private val penPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-        color = Color.parseColor("#E94560")
-    }
-
-    private val eraserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-        color = Color.parseColor("#0D1117") // erase = background color
-    }
-
+    // Drawing paints (UI only, NO persistent trails)
     private val bgPaint = Paint().apply {
         color = Color.parseColor("#0D1117")
     }
 
-    private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.parseColor("#E9456033")
+        color = Color.parseColor("#1F2937")
         strokeWidth = 1f
     }
 
-    private var lastX = 0f
-    private var lastY = 0f
-    private var isDrawing = false
+    private val touchIndicatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#44E94560")
+        strokeWidth = 3f
+    }
 
-    // -- Event rate tracking --------------------------------------------------
+    private val touchDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#E94560")
+    }
+
+    // Touch indicator state
+    private var isTouching = false
+    private var touchX = 0f
+    private var touchY = 0f
+    private var touchPressure = 0f
+
+    // Tap detection for relative mode
+    private var downTime = 0L
+    private var startX = 0f
+    private var startY = 0f
+    private var hasMoved = false
+
+    // Event rate tracking
     private var eventCount = 0
     private var lastEventRateTime = System.currentTimeMillis()
-    var onEventRate: ((hz: Int) -> Unit)? = null
-
-    // -- Clear button area ----------------------------------------------------
-    private val clearRect = RectF()
-    private val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#22E94560")
-        style = Paint.Style.FILL
-    }
-    private val clearTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#E94560")
-        textSize = 30f
-        textAlign = Paint.Align.CENTER
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        _trailBitmap?.recycle()
-        _trailBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        _trailCanvas = Canvas(_trailBitmap!!)
-        _trailCanvas!!.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bgPaint)
-
-        clearRect.set(w - 90f, 12f, w - 12f, 52f)
-    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        _trailBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        // Background
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // Crosshair grid (subtle)
-        val step = 80f
+        // Subtle tablet crosshair grid
+        val step = 100f
         var x = step
-        while (x < width) { canvas.drawLine(x, 0f, x, height.toFloat(), crosshairPaint); x += step }
+        while (x < width) {
+            canvas.drawLine(x, 0f, x, height.toFloat(), gridPaint)
+            x += step
+        }
         var y = step
-        while (y < height) { canvas.drawLine(0f, y, width.toFloat(), y, crosshairPaint); y += step }
+        while (y < height) {
+            canvas.drawLine(0f, y, width.toFloat(), y, gridPaint)
+            y += step
+        }
 
-        // Clear button
-        canvas.drawRoundRect(clearRect, 8f, 8f, clearPaint)
-        canvas.drawText("CLR", clearRect.centerX(), clearRect.centerY() + 10f, clearTextPaint)
+        // Active touch indicator (only visible while finger is on screen, NO persistent lines!)
+        if (isTouching) {
+            val radius = 20f + (touchPressure * 30f)
+            canvas.drawCircle(touchX, touchY, radius, touchIndicatorPaint)
+            canvas.drawCircle(touchX, touchY, 6f, touchDotPaint)
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Tap on clear button?
-        if (event.action == MotionEvent.ACTION_DOWN &&
-            clearRect.contains(event.x, event.y)) {
-            clearCanvas()
-            return true
-        }
-
         val toolType = event.getToolType(0)
         val isEraser = toolType == MotionEvent.TOOL_TYPE_ERASER
         val isStylusOrFinger = toolType == MotionEvent.TOOL_TYPE_STYLUS ||
@@ -114,32 +99,91 @@ class StylusView @JvmOverloads constructor(
 
         if (!isStylusOrFinger && !isEraser) return false
 
-        // Process all historical batched points for smoothness
-        val historySize = event.historySize
-        for (h in 0 until historySize) {
-            processPoint(
-                action = MotionEvent.ACTION_MOVE,
-                x = event.getHistoricalX(h),
-                y = event.getHistoricalY(h),
-                pressure = event.getHistoricalPressure(h),
-                tiltX = getTiltX(event),
-                tiltY = getTiltY(event),
-                twist = getTwist(event),
-                isEraser = isEraser
-            )
-        }
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                isTouching = true
+                touchX = event.x
+                touchY = event.y
+                touchPressure = event.pressure
+                downTime = System.currentTimeMillis()
+                startX = event.x
+                startY = event.y
+                hasMoved = false
 
-        // Current point
-        processPoint(
-            action = event.action and MotionEvent.ACTION_MASK,
-            x = event.x,
-            y = event.y,
-            pressure = event.pressure,
-            tiltX = getTiltX(event),
-            tiltY = getTiltY(event),
-            twist = getTwist(event),
-            isEraser = isEraser
-        )
+                processPoint(
+                    action = MotionEvent.ACTION_DOWN,
+                    x = event.x,
+                    y = event.y,
+                    pressure = event.pressure,
+                    tiltX = getTiltX(event),
+                    tiltY = getTiltY(event),
+                    twist = getTwist(event),
+                    isEraser = isEraser
+                )
+                invalidate()
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                isTouching = true
+                touchX = event.x
+                touchY = event.y
+                touchPressure = event.pressure
+
+                val dist = hypot((event.x - startX).toDouble(), (event.y - startY).toDouble()).toFloat()
+                if (dist > 10f) {
+                    hasMoved = true
+                }
+
+                // Process historical points for smoothness
+                val historySize = event.historySize
+                for (h in 0 until historySize) {
+                    processPoint(
+                        action = MotionEvent.ACTION_MOVE,
+                        x = event.getHistoricalX(h),
+                        y = event.getHistoricalY(h),
+                        pressure = event.getHistoricalPressure(h),
+                        tiltX = getTiltX(event),
+                        tiltY = getTiltY(event),
+                        twist = getTwist(event),
+                        isEraser = isEraser
+                    )
+                }
+
+                processPoint(
+                    action = MotionEvent.ACTION_MOVE,
+                    x = event.x,
+                    y = event.y,
+                    pressure = event.pressure,
+                    tiltX = getTiltX(event),
+                    tiltY = getTiltY(event),
+                    twist = getTwist(event),
+                    isEraser = isEraser
+                )
+                invalidate()
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isTouching = false
+                val elapsed = System.currentTimeMillis() - downTime
+
+                // In relative mode: quick tap without movement = click
+                if (isRelativeMode && !hasMoved && elapsed < 250) {
+                    sendTapClick()
+                }
+
+                processPoint(
+                    action = MotionEvent.ACTION_UP,
+                    x = event.x,
+                    y = event.y,
+                    pressure = 0f,
+                    tiltX = 0,
+                    tiltY = 0,
+                    twist = 0,
+                    isEraser = isEraser
+                )
+                invalidate()
+            }
+        }
 
         return true
     }
@@ -150,14 +194,12 @@ class StylusView @JvmOverloads constructor(
         tiltX: Int, tiltY: Int, twist: Int,
         isEraser: Boolean
     ) {
-        val normX = x / width.toFloat()
-        val normY = y / height.toFloat()
-
-        // Clamp pressure: finger touch area gives rough 0.0..1.0 � keep as-is
+        val normX = (x / width.toFloat()).coerceIn(0f, 1f)
+        val normY = (y / height.toFloat()).coerceIn(0f, 1f)
         val clampedPressure = pressure.coerceIn(0f, 1f)
+
         onPressureChanged?.invoke(clampedPressure)
 
-        // Determine packet type
         val type: Byte = when {
             isEraser -> when (action) {
                 MotionEvent.ACTION_DOWN -> StylusPacket.TYPE_ERASER_DOWN
@@ -171,46 +213,36 @@ class StylusView @JvmOverloads constructor(
             }
         }
 
+        var flags: Byte = 0
+        if (isRelativeMode) {
+            flags = (flags.toInt() or StylusPacket.FLAG_RELATIVE_MODE.toInt()).toByte()
+        }
+
         val packet = StylusPacket.encode(
             type = type,
-            x = normX, y = normY,
+            flags = flags,
+            x = normX,
+            y = normY,
             pressure = clampedPressure,
-            tiltX = tiltX, tiltY = tiltY, twist = twist
+            tiltX = tiltX,
+            tiltY = tiltY,
+            twist = twist
         )
         onStylusEvent?.invoke(packet)
 
-        // Draw trail
-        drawTrail(action, x, y, clampedPressure, isEraser)
-
-        // Event rate
         trackEventRate()
     }
 
-    private fun drawTrail(action: Int, x: Float, y: Float, pressure: Float, isEraser: Boolean) {
-        val canvas = _trailCanvas ?: return
-        val paint = if (isEraser) eraserPaint else penPaint
-
-        val strokeWidth = if (isEraser) 40f else (2f + pressure * 28f)
-        paint.strokeWidth = strokeWidth
-        paint.alpha = if (isEraser) 255 else (180 + (pressure * 75).toInt()).coerceIn(0, 255)
-
-        when (action) {
-            MotionEvent.ACTION_DOWN -> {
-                isDrawing = true
-                lastX = x; lastY = y
-                canvas.drawPoint(x, y, paint)
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (isDrawing) {
-                    canvas.drawLine(lastX, lastY, x, y, paint)
-                    lastX = x; lastY = y
-                }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isDrawing = false
-            }
-        }
-        invalidate()
+    private fun sendTapClick() {
+        var flags: Byte = StylusPacket.FLAG_RELATIVE_MODE
+        val packet = StylusPacket.encode(
+            type = StylusPacket.TYPE_MOUSE_TAP,
+            flags = flags,
+            x = (touchX / width.toFloat()).coerceIn(0f, 1f),
+            y = (touchY / height.toFloat()).coerceIn(0f, 1f),
+            pressure = 1.0f
+        )
+        onStylusEvent?.invoke(packet)
     }
 
     private fun getTiltX(event: MotionEvent): Int {
@@ -242,10 +274,5 @@ class StylusView @JvmOverloads constructor(
             eventCount = 0
             lastEventRateTime = now
         }
-    }
-
-    fun clearCanvas() {
-        _trailCanvas?.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-        invalidate()
     }
 }

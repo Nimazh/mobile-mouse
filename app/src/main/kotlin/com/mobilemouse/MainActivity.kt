@@ -1,6 +1,7 @@
-﻿package com.mobilemouse
+package com.mobilemouse
 
 import android.content.*
+import android.graphics.Color
 import android.os.*
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
@@ -36,9 +37,22 @@ class MainActivity : AppCompatActivity() {
         // Keep screen on while app is active
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Start and bind to the foreground service
+        // Start and bind to the service
         val intent = Intent(this, StylusServerService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+
+        // Mode toggle button: Absolute (Tablet/Pen) vs Relative (Trackpad/Mouse)
+        binding.btnModeToggle.setOnClickListener {
+            val isRel = !binding.stylusView.isRelativeMode
+            binding.stylusView.isRelativeMode = isRel
+            if (isRel) {
+                binding.btnModeToggle.text = "????: ??? (????)"
+                binding.btnModeToggle.setBackgroundColor(Color.parseColor("#0F3460"))
+            } else {
+                binding.btnModeToggle.text = "????: ??? (????)"
+                binding.btnModeToggle.setBackgroundColor(Color.parseColor("#E94560"))
+            }
+        }
 
         // Poll connection status
         lifecycleScope.launch {
@@ -53,12 +67,13 @@ class MainActivity : AppCompatActivity() {
         val server = serverBinder?.getServer() ?: return
 
         binding.stylusView.onStylusEvent = { packet ->
-            server.sendPacket(packet)
+            server.broadcast(packet)
         }
 
         binding.stylusView.onPressureChanged = { pressure ->
             runOnUiThread {
-                binding.tvPressure.text = String.format(Locale.US, "%.0f%%", pressure * 100)
+                val pct = (pressure * 100).toInt()
+                binding.tvPressure.text = "$pct%"
             }
         }
 
@@ -71,15 +86,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStatus() {
         val server = serverBinder?.getServer()
-        val clients = server?.clientCount ?: 0
+        val count = server?.clientCount ?: 0
+
         runOnUiThread {
-            binding.tvClients.text = clients.toString()
-            if (clients > 0) {
-                binding.tvStatus.text = "$clients PC client(s) connected"
+            binding.tvClients.text = count.toString()
+
+            if (count > 0) {
                 binding.statusDot.setBackgroundResource(R.drawable.dot_connected)
+                binding.tvStatus.text = String.format(
+                    Locale.US,
+                    "Connected: %d PC client(s)", count
+                )
+                binding.tvStatus.setTextColor(Color.parseColor("#4CAF50"))
             } else {
-                binding.tvStatus.text = "Waiting for PC connection..."
                 binding.statusDot.setBackgroundResource(R.drawable.dot_disconnected)
+                binding.tvStatus.text = "Waiting for PC connection..."
+                binding.tvStatus.setTextColor(Color.parseColor("#CCCCCC"))
             }
         }
     }

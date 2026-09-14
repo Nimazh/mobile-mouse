@@ -25,28 +25,53 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Mobile Mouse"
-                android:textColor="#E94560"
-                android:textSize="22sp"
-                android:textStyle="bold" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Pressure-Sensitive Stylus"
-                android:textColor="#888888"
-                android:textSize="12sp"
-                android:layout_marginTop="2dp" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Mobile Mouse"
+                        android:textColor="#E94560"
+                        android:textSize="22sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Drawing Tablet &amp; Touchpad"
+                        android:textColor="#888888"
+                        android:textSize="12sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btnModeToggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:backgroundTint="#E94560"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:text="????: ???"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
                 android:background="#2A2A4A"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="12dp" />
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="10dp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -71,19 +96,10 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Server: ws://localhost:8765"
-                android:textColor="#555577"
-                android:textSize="11sp"
-                android:fontFamily="monospace"
-                android:layout_marginTop="6dp" />
-
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Touch Pad -->
+    <!-- Touch Pad (clean, no lines drawn) -->
     <com.mobilemouse.StylusView
         android:id="@+id/stylusView"
         android:layout_width="0dp"
@@ -146,7 +162,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0 Hz"
-                    android:textColor="#0F3460"
+                    android:textColor="#3282B8"
                     android:textSize="20sp"
                     android:textStyle="bold"/>
                 <TextView
