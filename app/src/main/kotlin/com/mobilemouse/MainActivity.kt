@@ -1,4 +1,4 @@
-package com.mobilemouse
+﻿package com.mobilemouse
 
 import android.content.*
 import android.graphics.Color
@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
         val server = serverBinder?.getServer() ?: return
 
         binding.stylusView.onStylusEvent = { packet ->
-            server.broadcast(packet)
+            server.sendPacket(packet)
         }
 
         binding.stylusView.onPressureChanged = { pressure ->
