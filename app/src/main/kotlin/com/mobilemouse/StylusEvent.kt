@@ -27,8 +27,10 @@ object StylusPacket {
     const val TYPE_PEN_HOVER: Byte     = 0x04
     const val TYPE_ERASER_DOWN: Byte   = 0x05
     const val TYPE_ERASER_MOVE: Byte   = 0x06
-    const val TYPE_ERASER_UP: Byte     = 0x07
-    const val TYPE_MOUSE_TAP: Byte     = 0x10
+    const val TYPE_MOUSE_TAP: Byte        = 0x10
+    const val TYPE_MOUSE_RIGHT_TAP: Byte  = 0x11
+    const val TYPE_MOUSE_SCROLL: Byte     = 0x12
+    const val TYPE_MOUSE_MIDDLE_TAP: Byte = 0x13
 
     const val FLAG_BARREL_BUTTON: Byte = 0x01
     const val FLAG_IN_RANGE: Byte      = 0x02

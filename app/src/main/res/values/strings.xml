@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Mobile Mouse</string>
-    <string name="mode_pen">Mode: Pen</string>
-    <string name="mode_mouse">Mode: Mouse</string>
+    <string name="mode_pen">Mode: Tablet</string>
+    <string name="mode_mouse">Mode: Trackpad</string>
     <string name="palm_rejection_on">Palm: ON</string>
     <string name="palm_rejection_off">Palm: OFF</string>
 </resources>

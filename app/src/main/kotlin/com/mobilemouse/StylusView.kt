@@ -7,12 +7,13 @@ import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.max
 
 /**
- * Clean digitizer pad:
- * - NO lines are drawn or kept on screen (behaves like a real graphics tablet)
- * - Shows an optional subtle touch indicator only while finger is down
- * - Supports both Relative (Touchpad) and Absolute (Tablet) modes
+ * Dual-Mode Digitizer & Laptop Trackpad:
+ * - Tablet Mode: 1:1 absolute digitizer, pressure sensitive, active Palm Rejection.
+ * - Trackpad Mode: Authentic laptop trackpad with 1-finger move/tap, 2-finger scroll,
+ *   2-finger right-click, 3-finger middle-click, and on-screen Left/Right click buttons.
  */
 class StylusView @JvmOverloads constructor(
     context: Context,
@@ -24,10 +25,16 @@ class StylusView @JvmOverloads constructor(
     var onPressureChanged: ((pressure: Float) -> Unit)? = null
     var onEventRate: ((hz: Int) -> Unit)? = null
 
-    // Mode: true = Relative (Touchpad/Mouse), false = Absolute (Graphics Tablet)
+    // Mode: false = Tablet (Drawing/Pen), true = Trackpad (Laptop Mouse)
     var isRelativeMode: Boolean = false
+        set(value) {
+            field = value
+            activePointerId = MotionEvent.INVALID_POINTER_ID
+            isTouching = false
+            invalidate()
+        }
 
-    // Palm Rejection configuration
+    // Palm Rejection configuration (active in Tablet mode)
     var isPalmRejectionEnabled: Boolean = true
     var palmSizeThreshold: Float = 0.28f          // Normalized contact area (0.0 .. 1.0)
     var palmTouchMajorThresholdDp: Float = 36f    // Major axis threshold in DP
@@ -36,20 +43,31 @@ class StylusView @JvmOverloads constructor(
     private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
     private var isTrackingStylus: Boolean = false
 
-    // Drawing paints (UI only, NO persistent trails)
+    // Trackpad gesture state
+    private var pointerCountMax: Int = 0
+    private var isTwoFingerScrolling: Boolean = false
+    private var lastTwoFingerX: Float = 0f
+    private var lastTwoFingerY: Float = 0f
+    private var lastRelativeX: Float = 0f
+    private var lastRelativeY: Float = 0f
+    private var isLeftButtonPressed: Boolean = false
+    private var isRightButtonPressed: Boolean = false
+    private val buttonHeightDp: Float = 60f
+
+    // Drawing paints
     private val bgPaint = Paint().apply {
-        color = Color.parseColor("#0D1117")
+        color = Color.parseColor("#0A0E17")
     }
 
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.parseColor("#1F2937")
+        color = Color.parseColor("#1B2333")
         strokeWidth = 1f
     }
 
     private val touchIndicatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.parseColor("#44E94560")
+        color = Color.parseColor("#55E94560")
         strokeWidth = 3f
     }
 
@@ -58,13 +76,48 @@ class StylusView @JvmOverloads constructor(
         color = Color.parseColor("#E94560")
     }
 
+    // Trackpad styling
+    private val trackpadSurfacePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#121926")
+    }
+
+    private val trackpadBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#26344B")
+        strokeWidth = 2f
+    }
+
+    private val buttonNormalPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#1A2336")
+    }
+
+    private val buttonPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#0F3460")
+    }
+
+    private val buttonTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#94A3B8")
+        textSize = 34f
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    private val gestureHintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#475569")
+        textSize = 28f
+        textAlign = Paint.Align.CENTER
+    }
+
     // Touch indicator state
     private var isTouching = false
     private var touchX = 0f
     private var touchY = 0f
     private var touchPressure = 0f
 
-    // Tap detection for relative mode
+    // Tap detection
     private var downTime = 0L
     private var startX = 0f
     private var startY = 0f
@@ -76,79 +129,238 @@ class StylusView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        // Background
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // Subtle tablet crosshair grid
-        val step = 100f
-        var x = step
-        while (x < width) {
-            canvas.drawLine(x, 0f, x, height.toFloat(), gridPaint)
-            x += step
-        }
-        var y = step
-        while (y < height) {
-            canvas.drawLine(0f, y, width.toFloat(), y, gridPaint)
-            y += step
-        }
+        if (!isRelativeMode) {
+            // == 1. TABLET MODE (1:1 Clean Digitizer) ==
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // Active touch indicator (only visible while finger is on screen, NO persistent lines!)
-        if (isTouching) {
-            val radius = 20f + (touchPressure * 30f)
-            canvas.drawCircle(touchX, touchY, radius, touchIndicatorPaint)
-            canvas.drawCircle(touchX, touchY, 6f, touchDotPaint)
-        }
-    }
+            // Subtle tablet crosshair grid
+            val step = 100f
+            var x = step
+            while (x < width) {
+                canvas.drawLine(x, 0f, x, height.toFloat(), gridPaint)
+                x += step
+            }
+            var y = step
+            while (y < height) {
+                canvas.drawLine(0f, y, width.toFloat(), y, gridPaint)
+                y += step
+            }
 
-    private fun isPointerPalm(event: MotionEvent, pointerIndex: Int): Boolean {
-        if (!isPalmRejectionEnabled) return false
+            if (isTouching) {
+                val radius = 20f + (touchPressure * 30f)
+                canvas.drawCircle(touchX, touchY, radius, touchIndicatorPaint)
+                canvas.drawCircle(touchX, touchY, 6f, touchDotPaint)
+            }
+        } else {
+            // == 2. LAPTOP TRACKPAD MODE ==
+            val density = resources.displayMetrics.density
+            val btnHeight = buttonHeightDp * density
+            val padMargin = 12f * density
+            val trackpadBottom = height - btnHeight - (padMargin * 1.5f)
 
-        val toolType = event.getToolType(pointerIndex)
-        // Active stylus or eraser is never a palm
-        if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
-            return false
-        }
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // If an active stylus is present, ignore all finger touches completely
-        if (isTrackingStylus && toolType == MotionEvent.TOOL_TYPE_FINGER) {
-            return true
-        }
+            // Trackpad main surface
+            val padRect = RectF(padMargin, padMargin, width - padMargin, trackpadBottom)
+            canvas.drawRoundRect(padRect, 24f, 24f, trackpadSurfacePaint)
+            canvas.drawRoundRect(padRect, 24f, 24f, trackpadBorderPaint)
 
-        // Contact size check (palms have a much larger touch area than a fingertip)
-        val size = event.getSize(pointerIndex)
-        if (size > palmSizeThreshold) {
-            return true
-        }
+            // Center guide dot & gesture hints
+            val cx = width / 2f
+            canvas.drawCircle(cx, padRect.centerY(), 5f, gridPaint)
+            canvas.drawText("1-Finger Move | 2-Finger Scroll & Right Click", cx, padRect.centerY() + 48f, gestureHintPaint)
 
-        // Major touch axis check
-        val major = event.getTouchMajor(pointerIndex)
-        val density = resources.displayMetrics.density
-        if (major > (palmTouchMajorThresholdDp * density)) {
-            return true
-        }
+            // Bottom Buttons: Left and Right click
+            val btnTop = trackpadBottom + (padMargin * 0.5f)
+            val btnBottom = height - padMargin
 
-        return false
-    }
+            // Left Button
+            val leftBtnRect = RectF(padMargin, btnTop, cx - (4f * density), btnBottom)
+            val leftPaint = if (isLeftButtonPressed) buttonPressedPaint else buttonNormalPaint
+            canvas.drawRoundRect(leftBtnRect, 18f, 18f, leftPaint)
+            canvas.drawRoundRect(leftBtnRect, 18f, 18f, trackpadBorderPaint)
+            canvas.drawText("LEFT CLICK", leftBtnRect.centerX(), leftBtnRect.centerY() + 11f, buttonTextPaint)
 
-    private fun hasActiveStylus(event: MotionEvent): Boolean {
-        for (i in 0 until event.pointerCount) {
-            val toolType = event.getToolType(i)
-            if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
-                return true
+            // Right Button
+            val rightBtnRect = RectF(cx + (4f * density), btnTop, width - padMargin, btnBottom)
+            val rightPaint = if (isRightButtonPressed) buttonPressedPaint else buttonNormalPaint
+            canvas.drawRoundRect(rightBtnRect, 18f, 18f, rightPaint)
+            canvas.drawRoundRect(rightBtnRect, 18f, 18f, trackpadBorderPaint)
+            canvas.drawText("RIGHT CLICK", rightBtnRect.centerX(), rightBtnRect.centerY() + 11f, buttonTextPaint)
+
+            // Active touch feedback
+            if (isTouching) {
+                canvas.drawCircle(touchX, touchY, 26f, touchIndicatorPaint)
+                canvas.drawCircle(touchX, touchY, 8f, touchDotPaint)
             }
         }
-        return false
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Check if an active stylus is detected anywhere in this touch event
+        return if (isRelativeMode) {
+            onTouchTrackpad(event)
+        } else {
+            onTouchTablet(event)
+        }
+    }
+
+    // =========================================================================
+    // LAPTOP TRACKPAD GESTURE ENGINE
+    // =========================================================================
+    private fun onTouchTrackpad(event: MotionEvent): Boolean {
+        val density = resources.displayMetrics.density
+        val btnHeight = buttonHeightDp * density
+        val padMargin = 12f * density
+        val trackpadBottom = height - btnHeight - (padMargin * 1.5f)
+        val cx = width / 2f
+
+        // Check if initial touch lands on Bottom Buttons
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && event.y > trackpadBottom) {
+            if (event.x < cx) {
+                isLeftButtonPressed = true
+                sendTapClick()
+            } else {
+                isRightButtonPressed = true
+                sendRightTapClick()
+            }
+            invalidate()
+            return true
+        }
+
+        if (isLeftButtonPressed || isRightButtonPressed) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                isLeftButtonPressed = false
+                isRightButtonPressed = false
+                invalidate()
+            }
+            return true
+        }
+
+        // Main Trackpad Surface Gestures
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pointerCountMax = 1
+                isTwoFingerScrolling = false
+                downTime = System.currentTimeMillis()
+                startX = event.x
+                startY = event.y
+                touchX = event.x
+                touchY = event.y
+                lastRelativeX = event.x
+                lastRelativeY = event.y
+                isTouching = true
+                hasMoved = false
+                invalidate()
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                pointerCountMax = max(pointerCountMax, event.pointerCount)
+                if (event.pointerCount == 2) {
+                    lastTwoFingerX = (event.getX(0) + event.getX(1)) / 2f
+                    lastTwoFingerY = (event.getY(0) + event.getY(1)) / 2f
+                    isTwoFingerScrolling = false
+                }
+                invalidate()
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                pointerCountMax = max(pointerCountMax, event.pointerCount)
+
+                if (event.pointerCount >= 2) {
+                    // Two-finger scroll gesture
+                    val midX = (event.getX(0) + event.getX(1)) / 2f
+                    val midY = (event.getY(0) + event.getY(1)) / 2f
+                    val dx = midX - lastTwoFingerX
+                    val dy = midY - lastTwoFingerY
+
+                    if (abs(dx) > 3f || abs(dy) > 3f) {
+                        isTwoFingerScrolling = true
+                        // Natural scroll: swipe up = scroll up (+dy), swipe down = scroll down (-dy)
+                        val normDx = (dx / width.toFloat()).coerceIn(-0.5f, 0.5f)
+                        val normDy = (-dy / height.toFloat()).coerceIn(-0.5f, 0.5f)
+                        sendScroll(normDx, normDy)
+                        lastTwoFingerX = midX
+                        lastTwoFingerY = midY
+                    }
+                    touchX = midX
+                    touchY = midY
+                    invalidate()
+                } else if (event.pointerCount == 1 && !isTwoFingerScrolling) {
+                    // Single-finger relative mouse movement
+                    val curX = event.x
+                    val curY = event.y
+                    val dist = hypot((curX - startX).toDouble(), (curY - startY).toDouble()).toFloat()
+                    if (dist > 8f) {
+                        hasMoved = true
+                    }
+
+                    touchX = curX
+                    touchY = curY
+                    processPoint(
+                        action = MotionEvent.ACTION_MOVE,
+                        x = curX,
+                        y = curY,
+                        pressure = 1.0f,
+                        tiltX = 0,
+                        tiltY = 0,
+                        twist = 0,
+                        isEraser = false
+                    )
+                    lastRelativeX = curX
+                    lastRelativeY = curY
+                    invalidate()
+                }
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                invalidate()
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isTouching = false
+                val elapsed = System.currentTimeMillis() - downTime
+
+                if (pointerCountMax == 3 && elapsed < 350 && !hasMoved) {
+                    // Three-finger tap -> Middle Click
+                    sendMiddleTapClick()
+                } else if (pointerCountMax == 2 && elapsed < 350 && !isTwoFingerScrolling) {
+                    // Two-finger tap -> Right Click
+                    sendRightTapClick()
+                } else if (pointerCountMax == 1 && elapsed < 250 && !hasMoved) {
+                    // Single-finger tap -> Left Click
+                    sendTapClick()
+                }
+
+                processPoint(
+                    action = MotionEvent.ACTION_UP,
+                    x = event.x,
+                    y = event.y,
+                    pressure = 0f,
+                    tiltX = 0,
+                    tiltY = 0,
+                    twist = 0,
+                    isEraser = false
+                )
+
+                pointerCountMax = 0
+                isTwoFingerScrolling = false
+                invalidate()
+            }
+        }
+        return true
+    }
+
+    // =========================================================================
+    // GRAPHICS TABLET ENGINE (With 3-Layer Hybrid Palm Rejection)
+    // =========================================================================
+    private fun onTouchTablet(event: MotionEvent): Boolean {
         if (hasActiveStylus(event)) {
             isTrackingStylus = true
         }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                // If palm rejection is enabled and this touch is a palm, ignore it
                 if (isPointerPalm(event, 0)) {
                     return true
                 }
@@ -183,7 +395,6 @@ class StylusView @JvmOverloads constructor(
                 val toolType = event.getToolType(actionIndex)
 
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
-                    // Initial touch was rejected as palm; check if this second pointer is the real finger/pen
                     if (!isPointerPalm(event, actionIndex)) {
                         activePointerId = pointerId
                         isTouching = true
@@ -209,8 +420,6 @@ class StylusView @JvmOverloads constructor(
                         invalidate()
                     }
                 } else {
-                    // We already have an active pointer.
-                    // If the new pointer is an active stylus and current pointer is finger, upgrade to stylus!
                     if (isPalmRejectionEnabled && (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER)) {
                         val currentIdx = event.findPointerIndex(activePointerId)
                         if (currentIdx != -1 && event.getToolType(currentIdx) == MotionEvent.TOOL_TYPE_FINGER) {
@@ -221,13 +430,11 @@ class StylusView @JvmOverloads constructor(
                             invalidate()
                         }
                     }
-                    // Otherwise, ignore secondary touches (palm resting down while drawing)
                 }
             }
 
             MotionEvent.ACTION_MOVE -> {
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
-                    // Search for a valid non-palm pointer
                     for (i in 0 until event.pointerCount) {
                         if (!isPointerPalm(event, i)) {
                             activePointerId = event.getPointerId(i)
@@ -240,7 +447,6 @@ class StylusView @JvmOverloads constructor(
                 val pointerIndex = event.findPointerIndex(activePointerId)
                 if (pointerIndex == -1) return true
 
-                // If active pointer itself has expanded into a palm (hand rested), suppress it
                 if (isPointerPalm(event, pointerIndex)) {
                     return true
                 }
@@ -260,7 +466,6 @@ class StylusView @JvmOverloads constructor(
                     hasMoved = true
                 }
 
-                // Process historical points for the active pointer
                 val historySize = event.historySize
                 for (h in 0 until historySize) {
                     processPoint(
@@ -293,7 +498,6 @@ class StylusView @JvmOverloads constructor(
                 val liftedId = event.getPointerId(actionIndex)
 
                 if (liftedId == activePointerId) {
-                    // Active pointer was lifted. Look for another valid pointer, or end stroke
                     var nextValidId = MotionEvent.INVALID_POINTER_ID
                     var nextValidIdx = -1
 
@@ -328,19 +532,47 @@ class StylusView @JvmOverloads constructor(
                 isTrackingStylus = false
             }
         }
-
         return true
+    }
+
+    private fun isPointerPalm(event: MotionEvent, pointerIndex: Int): Boolean {
+        if (!isPalmRejectionEnabled) return false
+
+        val toolType = event.getToolType(pointerIndex)
+        if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
+            return false
+        }
+
+        if (isTrackingStylus && toolType == MotionEvent.TOOL_TYPE_FINGER) {
+            return true
+        }
+
+        val size = event.getSize(pointerIndex)
+        if (size > palmSizeThreshold) {
+            return true
+        }
+
+        val major = event.getTouchMajor(pointerIndex)
+        val density = resources.displayMetrics.density
+        if (major > (palmTouchMajorThresholdDp * density)) {
+            return true
+        }
+
+        return false
+    }
+
+    private fun hasActiveStylus(event: MotionEvent): Boolean {
+        for (i in 0 until event.pointerCount) {
+            val toolType = event.getToolType(i)
+            if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun finishTouch(x: Float, y: Float, isEraser: Boolean) {
         isTouching = false
-        val elapsed = System.currentTimeMillis() - downTime
-
-        // In relative mode: quick tap without movement = click
-        if (isRelativeMode && !hasMoved && elapsed < 250) {
-            sendTapClick()
-        }
-
         processPoint(
             action = MotionEvent.ACTION_UP,
             x = x,
@@ -400,15 +632,54 @@ class StylusView @JvmOverloads constructor(
     }
 
     private fun sendTapClick() {
-        val flags: Byte = StylusPacket.FLAG_RELATIVE_MODE
         val packet = StylusPacket.encode(
             type = StylusPacket.TYPE_MOUSE_TAP,
-            flags = flags,
+            flags = StylusPacket.FLAG_RELATIVE_MODE,
             x = (touchX / width.toFloat()).coerceIn(0f, 1f),
             y = (touchY / height.toFloat()).coerceIn(0f, 1f),
             pressure = 1.0f
         )
         onStylusEvent?.invoke(packet)
+        trackEventRate()
+    }
+
+    private fun sendRightTapClick() {
+        val packet = StylusPacket.encode(
+            type = StylusPacket.TYPE_MOUSE_RIGHT_TAP,
+            flags = StylusPacket.FLAG_RELATIVE_MODE,
+            x = (touchX / width.toFloat()).coerceIn(0f, 1f),
+            y = (touchY / height.toFloat()).coerceIn(0f, 1f),
+            pressure = 1.0f
+        )
+        onStylusEvent?.invoke(packet)
+        trackEventRate()
+    }
+
+    private fun sendMiddleTapClick() {
+        val packet = StylusPacket.encode(
+            type = StylusPacket.TYPE_MOUSE_MIDDLE_TAP,
+            flags = StylusPacket.FLAG_RELATIVE_MODE,
+            x = (touchX / width.toFloat()).coerceIn(0f, 1f),
+            y = (touchY / height.toFloat()).coerceIn(0f, 1f),
+            pressure = 1.0f
+        )
+        onStylusEvent?.invoke(packet)
+        trackEventRate()
+    }
+
+    private fun sendScroll(dx: Float, dy: Float) {
+        val encX = (0.5f + (dx * 0.5f)).coerceIn(0f, 1f)
+        val encY = (0.5f + (dy * 0.5f)).coerceIn(0f, 1f)
+
+        val packet = StylusPacket.encode(
+            type = StylusPacket.TYPE_MOUSE_SCROLL,
+            flags = StylusPacket.FLAG_RELATIVE_MODE,
+            x = encX,
+            y = encY,
+            pressure = 1.0f
+        )
+        onStylusEvent?.invoke(packet)
+        trackEventRate()
     }
 
     private fun getTiltX(event: MotionEvent, pointerIndex: Int = 0): Int {
