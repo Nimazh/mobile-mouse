@@ -1,4 +1,4 @@
-package com.mobilemouse
+ï»¿package com.mobilemouse
 
 import android.content.Context
 import android.graphics.*
@@ -153,7 +153,7 @@ class StylusView @JvmOverloads constructor(
         val normX = x / width.toFloat()
         val normY = y / height.toFloat()
 
-        // Clamp pressure: finger touch area gives rough 0.0..1.0 — keep as-is
+        // Clamp pressure: finger touch area gives rough 0.0..1.0 ï¿½ keep as-is
         val clampedPressure = pressure.coerceIn(0f, 1f)
         onPressureChanged?.invoke(clampedPressure)
 
@@ -214,20 +214,23 @@ class StylusView @JvmOverloads constructor(
     }
 
     private fun getTiltX(event: MotionEvent): Int {
-        return if (event.axisCount > MotionEvent.AXIS_TILT) {
-            (Math.toDegrees(event.getAxisValue(MotionEvent.AXIS_TILT).toDouble()) - 90).toInt()
+        val tilt = event.getAxisValue(MotionEvent.AXIS_TILT)
+        return if (tilt != 0f) {
+            (Math.toDegrees(tilt.toDouble()) - 90).toInt().coerceIn(-90, 90)
         } else 0
     }
 
     private fun getTiltY(event: MotionEvent): Int {
-        return if (event.axisCount > MotionEvent.AXIS_ORIENTATION) {
-            Math.toDegrees(event.getAxisValue(MotionEvent.AXIS_ORIENTATION).toDouble()).toInt()
+        val orient = event.getAxisValue(MotionEvent.AXIS_ORIENTATION)
+        return if (orient != 0f) {
+            Math.toDegrees(orient.toDouble()).toInt().coerceIn(-90, 90)
         } else 0
     }
 
     private fun getTwist(event: MotionEvent): Int {
-        return if (event.axisCount > MotionEvent.AXIS_ORIENTATION) {
-            ((Math.toDegrees(event.getAxisValue(MotionEvent.AXIS_ORIENTATION).toDouble()) + 360) % 360).toInt()
+        val orient = event.getAxisValue(MotionEvent.AXIS_ORIENTATION)
+        return if (orient != 0f) {
+            ((Math.toDegrees(orient.toDouble()) + 360) % 360).toInt()
         } else 0
     }
 
