@@ -1,0 +1,15 @@
+# Android
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+app/build/
+*.apk
+*.aab
+
+# Gradle wrapper cache (keep the jar itself)
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
