@@ -1,4 +1,4 @@
-package com.mobilemouse
+﻿package com.mobilemouse
 
 import android.content.*
 import android.os.*
@@ -38,7 +38,6 @@ class MainActivity : AppCompatActivity() {
 
         // Start and bind to the foreground service
         val intent = Intent(this, StylusServerService::class.java)
-        startForegroundService(intent)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         // Poll connection status
