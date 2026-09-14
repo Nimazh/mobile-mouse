@@ -1,4 +1,4 @@
-﻿package com.mobilemouse
+package com.mobilemouse
 
 import android.content.*
 import android.graphics.Color
@@ -41,17 +41,25 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, StylusServerService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
+        // Palm rejection toggle button
+        val prefs = getSharedPreferences("mobile_mouse_prefs", Context.MODE_PRIVATE)
+        val initialPalm = prefs.getBoolean("palm_rejection", true)
+        binding.stylusView.isPalmRejectionEnabled = initialPalm
+        updatePalmButton(initialPalm)
+
+        binding.btnPalmToggle.setOnClickListener {
+            val enabled = !binding.stylusView.isPalmRejectionEnabled
+            binding.stylusView.isPalmRejectionEnabled = enabled
+            prefs.edit().putBoolean("palm_rejection", enabled).apply()
+            updatePalmButton(enabled)
+        }
+
         // Mode toggle button: Absolute (Tablet/Pen) vs Relative (Trackpad/Mouse)
+        updateModeButton(binding.stylusView.isRelativeMode)
         binding.btnModeToggle.setOnClickListener {
             val isRel = !binding.stylusView.isRelativeMode
             binding.stylusView.isRelativeMode = isRel
-            if (isRel) {
-                binding.btnModeToggle.text = "????: ??? (????)"
-                binding.btnModeToggle.setBackgroundColor(Color.parseColor("#0F3460"))
-            } else {
-                binding.btnModeToggle.text = "????: ??? (????)"
-                binding.btnModeToggle.setBackgroundColor(Color.parseColor("#E94560"))
-            }
+            updateModeButton(isRel)
         }
 
         // Poll connection status
@@ -103,6 +111,26 @@ class MainActivity : AppCompatActivity() {
                 binding.tvStatus.text = "Waiting for PC connection..."
                 binding.tvStatus.setTextColor(Color.parseColor("#CCCCCC"))
             }
+        }
+    }
+
+    private fun updatePalmButton(enabled: Boolean) {
+        if (enabled) {
+            binding.btnPalmToggle.text = getString(R.string.palm_rejection_on)
+            binding.btnPalmToggle.setBackgroundColor(Color.parseColor("#22C55E"))
+        } else {
+            binding.btnPalmToggle.text = getString(R.string.palm_rejection_off)
+            binding.btnPalmToggle.setBackgroundColor(Color.parseColor("#475569"))
+        }
+    }
+
+    private fun updateModeButton(isRel: Boolean) {
+        if (isRel) {
+            binding.btnModeToggle.text = getString(R.string.mode_mouse)
+            binding.btnModeToggle.setBackgroundColor(Color.parseColor("#0F3460"))
+        } else {
+            binding.btnModeToggle.text = getString(R.string.mode_pen)
+            binding.btnModeToggle.setBackgroundColor(Color.parseColor("#E94560"))
         }
     }
 

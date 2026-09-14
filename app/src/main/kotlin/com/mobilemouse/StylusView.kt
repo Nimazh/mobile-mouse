@@ -27,6 +27,15 @@ class StylusView @JvmOverloads constructor(
     // Mode: true = Relative (Touchpad/Mouse), false = Absolute (Graphics Tablet)
     var isRelativeMode: Boolean = false
 
+    // Palm Rejection configuration
+    var isPalmRejectionEnabled: Boolean = true
+    var palmSizeThreshold: Float = 0.28f          // Normalized contact area (0.0 .. 1.0)
+    var palmTouchMajorThresholdDp: Float = 36f    // Major axis threshold in DP
+
+    // Active pointer tracking
+    private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
+    private var isTrackingStylus: Boolean = false
+
     // Drawing paints (UI only, NO persistent trails)
     private val bgPaint = Paint().apply {
         color = Color.parseColor("#0D1117")
@@ -91,16 +100,60 @@ class StylusView @JvmOverloads constructor(
         }
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        val toolType = event.getToolType(0)
-        val isEraser = toolType == MotionEvent.TOOL_TYPE_ERASER
-        val isStylusOrFinger = toolType == MotionEvent.TOOL_TYPE_STYLUS ||
-                               toolType == MotionEvent.TOOL_TYPE_FINGER
+    private fun isPointerPalm(event: MotionEvent, pointerIndex: Int): Boolean {
+        if (!isPalmRejectionEnabled) return false
 
-        if (!isStylusOrFinger && !isEraser) return false
+        val toolType = event.getToolType(pointerIndex)
+        // Active stylus or eraser is never a palm
+        if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
+            return false
+        }
+
+        // If an active stylus is present, ignore all finger touches completely
+        if (isTrackingStylus && toolType == MotionEvent.TOOL_TYPE_FINGER) {
+            return true
+        }
+
+        // Contact size check (palms have a much larger touch area than a fingertip)
+        val size = event.getSize(pointerIndex)
+        if (size > palmSizeThreshold) {
+            return true
+        }
+
+        // Major touch axis check
+        val major = event.getTouchMajor(pointerIndex)
+        val density = resources.displayMetrics.density
+        if (major > (palmTouchMajorThresholdDp * density)) {
+            return true
+        }
+
+        return false
+    }
+
+    private fun hasActiveStylus(event: MotionEvent): Boolean {
+        for (i in 0 until event.pointerCount) {
+            val toolType = event.getToolType(i)
+            if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
+                return true
+            }
+        }
+        return false
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Check if an active stylus is detected anywhere in this touch event
+        if (hasActiveStylus(event)) {
+            isTrackingStylus = true
+        }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // If palm rejection is enabled and this touch is a palm, ignore it
+                if (isPointerPalm(event, 0)) {
+                    return true
+                }
+
+                activePointerId = event.getPointerId(0)
                 isTouching = true
                 touchX = event.x
                 touchY = event.y
@@ -110,82 +163,195 @@ class StylusView @JvmOverloads constructor(
                 startY = event.y
                 hasMoved = false
 
+                val isEraser = event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
                 processPoint(
                     action = MotionEvent.ACTION_DOWN,
                     x = event.x,
                     y = event.y,
                     pressure = event.pressure,
-                    tiltX = getTiltX(event),
-                    tiltY = getTiltY(event),
-                    twist = getTwist(event),
+                    tiltX = getTiltX(event, 0),
+                    tiltY = getTiltY(event, 0),
+                    twist = getTwist(event, 0),
                     isEraser = isEraser
                 )
                 invalidate()
             }
 
-            MotionEvent.ACTION_MOVE -> {
-                isTouching = true
-                touchX = event.x
-                touchY = event.y
-                touchPressure = event.pressure
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val actionIndex = event.actionIndex
+                val pointerId = event.getPointerId(actionIndex)
+                val toolType = event.getToolType(actionIndex)
 
-                val dist = hypot((event.x - startX).toDouble(), (event.y - startY).toDouble()).toFloat()
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
+                    // Initial touch was rejected as palm; check if this second pointer is the real finger/pen
+                    if (!isPointerPalm(event, actionIndex)) {
+                        activePointerId = pointerId
+                        isTouching = true
+                        touchX = event.getX(actionIndex)
+                        touchY = event.getY(actionIndex)
+                        touchPressure = event.getPressure(actionIndex)
+                        downTime = System.currentTimeMillis()
+                        startX = touchX
+                        startY = touchY
+                        hasMoved = false
+
+                        val isEraser = toolType == MotionEvent.TOOL_TYPE_ERASER
+                        processPoint(
+                            action = MotionEvent.ACTION_DOWN,
+                            x = touchX,
+                            y = touchY,
+                            pressure = touchPressure,
+                            tiltX = getTiltX(event, actionIndex),
+                            tiltY = getTiltY(event, actionIndex),
+                            twist = getTwist(event, actionIndex),
+                            isEraser = isEraser
+                        )
+                        invalidate()
+                    }
+                } else {
+                    // We already have an active pointer.
+                    // If the new pointer is an active stylus and current pointer is finger, upgrade to stylus!
+                    if (isPalmRejectionEnabled && (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER)) {
+                        val currentIdx = event.findPointerIndex(activePointerId)
+                        if (currentIdx != -1 && event.getToolType(currentIdx) == MotionEvent.TOOL_TYPE_FINGER) {
+                            activePointerId = pointerId
+                            touchX = event.getX(actionIndex)
+                            touchY = event.getY(actionIndex)
+                            touchPressure = event.getPressure(actionIndex)
+                            invalidate()
+                        }
+                    }
+                    // Otherwise, ignore secondary touches (palm resting down while drawing)
+                }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
+                    // Search for a valid non-palm pointer
+                    for (i in 0 until event.pointerCount) {
+                        if (!isPointerPalm(event, i)) {
+                            activePointerId = event.getPointerId(i)
+                            break
+                        }
+                    }
+                    if (activePointerId == MotionEvent.INVALID_POINTER_ID) return true
+                }
+
+                val pointerIndex = event.findPointerIndex(activePointerId)
+                if (pointerIndex == -1) return true
+
+                // If active pointer itself has expanded into a palm (hand rested), suppress it
+                if (isPointerPalm(event, pointerIndex)) {
+                    return true
+                }
+
+                val curX = event.getX(pointerIndex)
+                val curY = event.getY(pointerIndex)
+                val curP = event.getPressure(pointerIndex)
+                val isEraser = event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_ERASER
+
+                isTouching = true
+                touchX = curX
+                touchY = curY
+                touchPressure = curP
+
+                val dist = hypot((curX - startX).toDouble(), (curY - startY).toDouble()).toFloat()
                 if (dist > 10f) {
                     hasMoved = true
                 }
 
-                // Process historical points for smoothness
+                // Process historical points for the active pointer
                 val historySize = event.historySize
                 for (h in 0 until historySize) {
                     processPoint(
                         action = MotionEvent.ACTION_MOVE,
-                        x = event.getHistoricalX(h),
-                        y = event.getHistoricalY(h),
-                        pressure = event.getHistoricalPressure(h),
-                        tiltX = getTiltX(event),
-                        tiltY = getTiltY(event),
-                        twist = getTwist(event),
+                        x = event.getHistoricalX(pointerIndex, h),
+                        y = event.getHistoricalY(pointerIndex, h),
+                        pressure = event.getHistoricalPressure(pointerIndex, h),
+                        tiltX = getTiltX(event, pointerIndex),
+                        tiltY = getTiltY(event, pointerIndex),
+                        twist = getTwist(event, pointerIndex),
                         isEraser = isEraser
                     )
                 }
 
                 processPoint(
                     action = MotionEvent.ACTION_MOVE,
-                    x = event.x,
-                    y = event.y,
-                    pressure = event.pressure,
-                    tiltX = getTiltX(event),
-                    tiltY = getTiltY(event),
-                    twist = getTwist(event),
+                    x = curX,
+                    y = curY,
+                    pressure = curP,
+                    tiltX = getTiltX(event, pointerIndex),
+                    tiltY = getTiltY(event, pointerIndex),
+                    twist = getTwist(event, pointerIndex),
                     isEraser = isEraser
                 )
                 invalidate()
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isTouching = false
-                val elapsed = System.currentTimeMillis() - downTime
+            MotionEvent.ACTION_POINTER_UP -> {
+                val actionIndex = event.actionIndex
+                val liftedId = event.getPointerId(actionIndex)
 
-                // In relative mode: quick tap without movement = click
-                if (isRelativeMode && !hasMoved && elapsed < 250) {
-                    sendTapClick()
+                if (liftedId == activePointerId) {
+                    // Active pointer was lifted. Look for another valid pointer, or end stroke
+                    var nextValidId = MotionEvent.INVALID_POINTER_ID
+                    var nextValidIdx = -1
+
+                    for (i in 0 until event.pointerCount) {
+                        if (i != actionIndex && !isPointerPalm(event, i)) {
+                            nextValidId = event.getPointerId(i)
+                            nextValidIdx = i
+                            break
+                        }
+                    }
+
+                    if (nextValidId != MotionEvent.INVALID_POINTER_ID && nextValidIdx != -1) {
+                        activePointerId = nextValidId
+                        touchX = event.getX(nextValidIdx)
+                        touchY = event.getY(nextValidIdx)
+                        touchPressure = event.getPressure(nextValidIdx)
+                    } else {
+                        finishTouch(event.getX(actionIndex), event.getY(actionIndex), event.getToolType(actionIndex) == MotionEvent.TOOL_TYPE_ERASER)
+                        activePointerId = MotionEvent.INVALID_POINTER_ID
+                    }
                 }
+            }
 
-                processPoint(
-                    action = MotionEvent.ACTION_UP,
-                    x = event.x,
-                    y = event.y,
-                    pressure = 0f,
-                    tiltX = 0,
-                    tiltY = 0,
-                    twist = 0,
-                    isEraser = isEraser
-                )
-                invalidate()
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val pointerIndex = if (activePointerId != MotionEvent.INVALID_POINTER_ID) {
+                    event.findPointerIndex(activePointerId).takeIf { it != -1 } ?: 0
+                } else 0
+
+                val isEraser = event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_ERASER
+                finishTouch(event.getX(pointerIndex), event.getY(pointerIndex), isEraser)
+                activePointerId = MotionEvent.INVALID_POINTER_ID
+                isTrackingStylus = false
             }
         }
 
         return true
+    }
+
+    private fun finishTouch(x: Float, y: Float, isEraser: Boolean) {
+        isTouching = false
+        val elapsed = System.currentTimeMillis() - downTime
+
+        // In relative mode: quick tap without movement = click
+        if (isRelativeMode && !hasMoved && elapsed < 250) {
+            sendTapClick()
+        }
+
+        processPoint(
+            action = MotionEvent.ACTION_UP,
+            x = x,
+            y = y,
+            pressure = 0f,
+            tiltX = 0,
+            tiltY = 0,
+            twist = 0,
+            isEraser = isEraser
+        )
+        invalidate()
     }
 
     private fun processPoint(
@@ -234,7 +400,7 @@ class StylusView @JvmOverloads constructor(
     }
 
     private fun sendTapClick() {
-        var flags: Byte = StylusPacket.FLAG_RELATIVE_MODE
+        val flags: Byte = StylusPacket.FLAG_RELATIVE_MODE
         val packet = StylusPacket.encode(
             type = StylusPacket.TYPE_MOUSE_TAP,
             flags = flags,
@@ -245,22 +411,22 @@ class StylusView @JvmOverloads constructor(
         onStylusEvent?.invoke(packet)
     }
 
-    private fun getTiltX(event: MotionEvent): Int {
-        val tilt = event.getAxisValue(MotionEvent.AXIS_TILT)
+    private fun getTiltX(event: MotionEvent, pointerIndex: Int = 0): Int {
+        val tilt = event.getAxisValue(MotionEvent.AXIS_TILT, pointerIndex)
         return if (tilt != 0f) {
             (Math.toDegrees(tilt.toDouble()) - 90).toInt().coerceIn(-90, 90)
         } else 0
     }
 
-    private fun getTiltY(event: MotionEvent): Int {
-        val orient = event.getAxisValue(MotionEvent.AXIS_ORIENTATION)
+    private fun getTiltY(event: MotionEvent, pointerIndex: Int = 0): Int {
+        val orient = event.getAxisValue(MotionEvent.AXIS_ORIENTATION, pointerIndex)
         return if (orient != 0f) {
             Math.toDegrees(orient.toDouble()).toInt().coerceIn(-90, 90)
         } else 0
     }
 
-    private fun getTwist(event: MotionEvent): Int {
-        val orient = event.getAxisValue(MotionEvent.AXIS_ORIENTATION)
+    private fun getTwist(event: MotionEvent, pointerIndex: Int = 0): Int {
+        val orient = event.getAxisValue(MotionEvent.AXIS_ORIENTATION, pointerIndex)
         return if (orient != 0f) {
             ((Math.toDegrees(orient.toDouble()) + 360) % 360).toInt()
         } else 0

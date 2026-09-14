@@ -54,11 +54,19 @@
                 </LinearLayout>
 
                 <Button
+                    android:id="@+id/btnPalmToggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/palm_rejection_on"
+                    android:textSize="11sp"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
                     android:id="@+id/btnModeToggle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/mode_pen"
-                    android:textSize="12sp" />
+                    android:textSize="11sp" />
             </LinearLayout>
 
             <View
