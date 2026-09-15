@@ -39,6 +39,19 @@ class StylusView @JvmOverloads constructor(
     var palmSizeThreshold: Float = 0.28f          // Normalized contact area (0.0 .. 1.0)
     var palmTouchMajorThresholdDp: Float = 36f    // Major axis threshold in DP
 
+    // Full-screen and Trackpad button visibility
+    var isFullScreen: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var showTrackpadButtons: Boolean = true
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     // Active pointer tracking
     private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
     private var isTrackingStylus: Boolean = false
@@ -155,39 +168,55 @@ class StylusView @JvmOverloads constructor(
         } else {
             // == 2. LAPTOP TRACKPAD MODE ==
             val density = resources.displayMetrics.density
-            val btnHeight = buttonHeightDp * density
-            val padMargin = 12f * density
-            val trackpadBottom = height - btnHeight - (padMargin * 1.5f)
+            val btnHeight = if (showTrackpadButtons) buttonHeightDp * density else 0f
+            val padMargin = if (isFullScreen) 0f else (12f * density)
+            val trackpadBottom = if (showTrackpadButtons) {
+                height - btnHeight - (if (isFullScreen) (6f * density) else (padMargin * 1.5f))
+            } else {
+                height.toFloat()
+            }
 
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
             // Trackpad main surface
             val padRect = RectF(padMargin, padMargin, width - padMargin, trackpadBottom)
-            canvas.drawRoundRect(padRect, 24f, 24f, trackpadSurfacePaint)
-            canvas.drawRoundRect(padRect, 24f, 24f, trackpadBorderPaint)
+            if (isFullScreen && !showTrackpadButtons) {
+                canvas.drawRect(padRect, trackpadSurfacePaint)
+            } else {
+                canvas.drawRoundRect(padRect, 24f, 24f, trackpadSurfacePaint)
+                canvas.drawRoundRect(padRect, 24f, 24f, trackpadBorderPaint)
+            }
 
             // Center guide dot & gesture hints
             val cx = width / 2f
             canvas.drawCircle(cx, padRect.centerY(), 5f, gridPaint)
-            canvas.drawText("1-Finger Move | 2-Finger Scroll & Right Click", cx, padRect.centerY() + 48f, gestureHintPaint)
+            val hintText = if (showTrackpadButtons) {
+                "1-Finger Move | 2-Finger Scroll & Right Click"
+            } else {
+                "Full Screen Trackpad: Tap=Click | 2-Finger Scroll & Right Click"
+            }
+            canvas.drawText(hintText, cx, padRect.centerY() + 48f, gestureHintPaint)
 
             // Bottom Buttons: Left and Right click
-            val btnTop = trackpadBottom + (padMargin * 0.5f)
-            val btnBottom = height - padMargin
+            if (showTrackpadButtons) {
+                val btnTop = trackpadBottom + (if (isFullScreen) (4f * density) else (padMargin * 0.5f))
+                val btnBottom = height - (if (isFullScreen) (4f * density) else padMargin)
+                val btnSide = if (isFullScreen) (8f * density) else padMargin
 
-            // Left Button
-            val leftBtnRect = RectF(padMargin, btnTop, cx - (4f * density), btnBottom)
-            val leftPaint = if (isLeftButtonPressed) buttonPressedPaint else buttonNormalPaint
-            canvas.drawRoundRect(leftBtnRect, 18f, 18f, leftPaint)
-            canvas.drawRoundRect(leftBtnRect, 18f, 18f, trackpadBorderPaint)
-            canvas.drawText("LEFT CLICK", leftBtnRect.centerX(), leftBtnRect.centerY() + 11f, buttonTextPaint)
+                // Left Button
+                val leftBtnRect = RectF(btnSide, btnTop, cx - (4f * density), btnBottom)
+                val leftPaint = if (isLeftButtonPressed) buttonPressedPaint else buttonNormalPaint
+                canvas.drawRoundRect(leftBtnRect, 18f, 18f, leftPaint)
+                canvas.drawRoundRect(leftBtnRect, 18f, 18f, trackpadBorderPaint)
+                canvas.drawText("LEFT CLICK", leftBtnRect.centerX(), leftBtnRect.centerY() + 11f, buttonTextPaint)
 
-            // Right Button
-            val rightBtnRect = RectF(cx + (4f * density), btnTop, width - padMargin, btnBottom)
-            val rightPaint = if (isRightButtonPressed) buttonPressedPaint else buttonNormalPaint
-            canvas.drawRoundRect(rightBtnRect, 18f, 18f, rightPaint)
-            canvas.drawRoundRect(rightBtnRect, 18f, 18f, trackpadBorderPaint)
-            canvas.drawText("RIGHT CLICK", rightBtnRect.centerX(), rightBtnRect.centerY() + 11f, buttonTextPaint)
+                // Right Button
+                val rightBtnRect = RectF(cx + (4f * density), btnTop, width - btnSide, btnBottom)
+                val rightPaint = if (isRightButtonPressed) buttonPressedPaint else buttonNormalPaint
+                canvas.drawRoundRect(rightBtnRect, 18f, 18f, rightPaint)
+                canvas.drawRoundRect(rightBtnRect, 18f, 18f, trackpadBorderPaint)
+                canvas.drawText("RIGHT CLICK", rightBtnRect.centerX(), rightBtnRect.centerY() + 11f, buttonTextPaint)
+            }
 
             // Active touch feedback
             if (isTouching) {
@@ -210,13 +239,17 @@ class StylusView @JvmOverloads constructor(
     // =========================================================================
     private fun onTouchTrackpad(event: MotionEvent): Boolean {
         val density = resources.displayMetrics.density
-        val btnHeight = buttonHeightDp * density
-        val padMargin = 12f * density
-        val trackpadBottom = height - btnHeight - (padMargin * 1.5f)
+        val btnHeight = if (showTrackpadButtons) buttonHeightDp * density else 0f
+        val padMargin = if (isFullScreen) 0f else (12f * density)
+        val trackpadBottom = if (showTrackpadButtons) {
+            height - btnHeight - (if (isFullScreen) (6f * density) else (padMargin * 1.5f))
+        } else {
+            height.toFloat()
+        }
         val cx = width / 2f
 
         // Check if initial touch lands on Bottom Buttons
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && event.y > trackpadBottom) {
+        if (showTrackpadButtons && event.actionMasked == MotionEvent.ACTION_DOWN && event.y > trackpadBottom) {
             if (event.x < cx) {
                 isLeftButtonPressed = true
                 sendTapClick()

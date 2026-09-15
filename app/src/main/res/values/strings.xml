@@ -5,4 +5,8 @@
     <string name="mode_mouse">Mode: Trackpad</string>
     <string name="palm_rejection_on">Palm: ON</string>
     <string name="palm_rejection_off">Palm: OFF</string>
+    <string name="fullscreen_enter">Full Screen</string>
+    <string name="fullscreen_exit">Exit Full</string>
+    <string name="buttons_on">Btns: ON</string>
+    <string name="buttons_off">Btns: OFF</string>
 </resources>
